@@ -44,6 +44,9 @@ Full-screen applications use a separate alternate screen without adding
 their display updates to shell history.
 Drag to select text. Copy (Command-C), Paste (Command-V), Select All
 (Command-A), and the right-click context menu use the native clipboard.
+Mouse selection is available through the GNUstep Selection pasteboard.
+Middle-click pastes it, including after leaving a pager. Shift bypasses
+application mouse reporting for local selection and paste.
 When an application requests mouse reporting, mouse events go to it. Hold
 Shift to select, scroll history, or open the context menu locally.
 Paste uses bracketed paste when requested by the program; escape bytes are
@@ -103,9 +106,9 @@ changes; no full xterm resource/escape-extension compatibility. No bidi,
 complex-script shaping guarantee, input-method composition UI, or extended
 keyboard protocols such as Kitty. Double-width/height DEC lines are parsed
 but not rendered at double size; curly underline is drawn as single.
-Resizing retains physical history lines rather than reflowing wrapped text;
-narrower views may clip long history lines. Copy trims trailing spaces and
-copies physical rows as separate lines. Selection does not autoscroll beyond
+Resizing reflows primary-screen output and scrollback, preserving explicit
+line endings. Full-screen applications retain a rectangular alternate screen.
+Copy trims trailing spaces and joins automatically wrapped rows. Selection does not autoscroll beyond
 the window. Very large pastes are queued in memory while the PTY drains.
 The app targets POSIX systems with UNIX 98 PTYs (tested on GNU/Linux).
 

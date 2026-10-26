@@ -63,6 +63,7 @@ test_assert (BOOL ok, NSString *message)
 - (void)queueBytes:(const char *)bytes length:(size_t)length;
 
 - (NSPasteboard *)pasteboard;
+- (NSPasteboard *)selectionPasteboard;
 - (void)advanceBlink;
 
 @end
@@ -80,6 +81,11 @@ test_assert (BOOL ok, NSString *message)
 - (NSPasteboard *)pasteboard
 {
   return [NSPasteboard pasteboardWithName:@"TerminalTerminalRegression"];
+}
+
+- (NSPasteboard *)selectionPasteboard
+{
+  return [NSPasteboard pasteboardWithName:@"TerminalSelectionRegression"];
 }
 
 - (void)queueBytes:(const char *)bytes length:(size_t)length
@@ -339,6 +345,74 @@ test_terminal (NSString *temporaryDirectory)
   [view setValue:[NSNumber numberWithInt:-1] forKey:@"_selectionStart"];
   [view setValue:[NSNumber numberWithInt:-1] forKey:@"_selectionEnd"];
   terminal_feed (view, @"\033[2J\033[H");
+
+  /* Selection must survive leaving less's alternate screen. */
+  terminal_feed (view, @"\033[?1049h2d9716c");
+  [view setValue:[NSNumber numberWithInt:0] forKey:@"_selectionStart"];
+  [view setValue:[NSNumber numberWithInt:6] forKey:@"_selectionEnd"];
+  [view mouseUp:nil];
+  terminal_feed (view, @"\033[?1049l");
+  [view otherMouseDown:nil];
+  test_assert ([[view takeOutput] isEqual:
+      [@"2d9716c" dataUsingEncoding:NSUTF8StringEncoding]],
+      @"Middle paste retains selection after pager exit");
+  test_assert ([[pasteboard stringForType:NSStringPboardType]
+      hasPrefix:@"copy me\n"], @"Mouse selection leaves clipboard intact");
+  [[view selectionPasteboard] setString:@"external\nselection"
+                              forType:NSStringPboardType];
+  terminal_feed (view, @"\033[?2004h");
+  [view otherMouseDown:nil];
+  test_assert ([[view takeOutput] isEqual:
+      [@"\033[200~external\rselection\033[201~"
+          dataUsingEncoding:NSUTF8StringEncoding]],
+      @"Middle paste reads selection pasteboard and honors bracketed paste");
+  terminal_feed (view, @"\033[?2004l");
+
+  TerminalTestView *flow = [[TerminalTestView alloc]
+      initWithFrame:NSMakeRect (0, 0, 500, 240)];
+  [flow setFrameSize:[flow contentSizeForColumns:20 rows:6]];
+  terminal_feed (flow, @"abcdefghijklmnopqr\r\nSECOND\r\n$ ");
+  [flow setFrameSize:[flow contentSizeForColumns:10 rows:6]];
+  test_assert ([[flow screenText] hasPrefix:@"abcdefghij\nklmnopqr"],
+      @"Narrowing reflows existing output instead of clipping it");
+  [flow setFrameSize:[flow contentSizeForColumns:20 rows:6]];
+  test_assert ([[flow screenText] hasPrefix:@"abcdefghijklmnopqr"],
+      @"Widening rejoins soft wraps");
+  terminal_feed (flow, @"X");
+  test_assert ([[flow screenText] rangeOfString:@"$ X"].location != NSNotFound,
+      @"Reflow preserves the insertion cursor and explicit newlines");
+  terminal_feed (flow, @"\033c1234567890abcdefghijK\r\nnext\r\n");
+  [flow setFrameSize:[flow contentSizeForColumns:5 rows:3]];
+  [flow setFrameSize:[flow contentSizeForColumns:20 rows:6]];
+  test_assert ([[flow screenText] rangeOfString:@"1234567890abcdefghij"].location
+      != NSNotFound, @"Reflow restores wrapped output from history");
+  terminal_feed (flow, @"\033c123456789界Z");
+  [flow setFrameSize:[flow contentSizeForColumns:10 rows:6]];
+  [flow setFrameSize:[flow contentSizeForColumns:20 rows:6]];
+  test_assert ([[flow screenText] hasPrefix:@"123456789界Z"],
+      @"Wide glyph padding does not become text when reflowing");
+  terminal_feed (flow, @"\033cabcdefghijklmnopqr\r\n$ ");
+  terminal_feed (flow, @"\033[?1049hFULL SCREEN");
+  [flow setFrameSize:[flow contentSizeForColumns:10 rows:6]];
+  [flow setFrameSize:[flow contentSizeForColumns:20 rows:6]];
+  terminal_feed (flow, @"\033[?1049lX");
+  test_assert ([[flow screenText] hasPrefix:@"abcdefghijklmnopqr"]
+      && [[flow screenText] rangeOfString:@"$ X"].location != NSNotFound,
+      @"Resizing a pager preserves hidden primary output and cursor");
+  terminal_feed (flow, @"\033c1234567890");
+  [flow setFrameSize:[flow contentSizeForColumns:5 rows:6]];
+  terminal_feed (flow, @"Z");
+  [flow setFrameSize:[flow contentSizeForColumns:20 rows:6]];
+  test_assert ([[flow screenText] hasPrefix:@"1234567890Z"],
+      @"Writing after reflow at the right edge preserves pending wrap");
+  terminal_feed (flow, @"\033cword next");
+  [flow setFrameSize:[flow contentSizeForColumns:5 rows:6]];
+  [flow selectAll:nil];
+  [flow copy:nil];
+  test_assert ([[[flow pasteboard] stringForType:NSStringPboardType]
+      hasPrefix:@"word next\n"],
+      @"Copy joins soft wraps while preserving spaces at wrap boundaries");
+  RELEASE (flow);
 
   /* Exercise AppKit drawing, including wide glyphs, in a real window. */
   NSWindow *preview = [[NSWindow alloc]

@@ -24,6 +24,10 @@ The suite covers:
 - Fragmented ANSI and UTF-8, wide/combining characters, DEC graphics, cursor
   addressing, erase/insert/delete, scroll regions, alternate screens, truecolor
   and indexed colors, device queries, application cursor/keypad and F5 input.
+- Primary-screen and history reflow on narrowing/widening, wide-glyph padding,
+  cursor preservation, and resizing while the primary screen is hidden.
+- Selection paste survives pager exit, keeps the clipboard separate, and uses
+  bracketed paste for externally supplied selection text.
 - Mouse SGR reporting and Shift bypass, bracketed paste, selection/copy,
   scrollbar actions, fractional trackpad deltas, Shift-Page Up, return to live
   output on typing/paste, reading-position preservation, the 5,000-line history
@@ -59,7 +63,7 @@ Not established by these checks: exhaustive xterm conformance, every font and
 Unicode script, physical trackpad hardware, other GNUstep backends, or non-Linux
 runtime behavior. See `Resources/Help.txt` for supported behavior and known
 limitations. This is a text terminal, without graphics protocols, input-method
-composition UI, or wrapped-line scrollback reflow.
+composition UI.
 
 ## Compiler regression (no display required)
 

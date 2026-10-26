@@ -41,6 +41,9 @@
 
 @interface TerminalView (Private)
 
+- (void)copyToPasteboard:(NSPasteboard *)pasteboard;
+- (void)pasteFromPasteboard:(NSPasteboard *)pasteboard;
+- (NSPasteboard *)selectionPasteboard;
 - (void)poll:(NSTimer *)timer;
 
 - (void)queueBytes:(const char *)bytes length:(size_t)length;
@@ -491,7 +494,7 @@ static NSUInteger cleanup_count;
 
 - (int)pushLine:(int)columns cells:(const TerminalGlyph *)cells
 {
-  if (_alternateScreen || !_scrollbackLimit)
+  if (!_scrollbackLimit)
     return 1;
   [_history addObject:[NSData dataWithBytes:cells
                                      length:columns * sizeof (*cells)]];
@@ -507,8 +510,6 @@ static NSUInteger cleanup_count;
 
 - (int)popLine:(int)columns cells:(TerminalGlyph *)cells
 {
-  if (_alternateScreen)
-    return 0;
   NSData *line = [_history lastObject];
   if (!line)
     return 0;
@@ -1407,7 +1408,8 @@ static NSUInteger cleanup_count;
 
 - (void)mouseUp:(NSEvent *)event
 {
-  [self reportMouse:event button:1 pressed:NO];
+  if (![self reportMouse:event button:1 pressed:NO])
+    [self copyToPasteboard:[self selectionPasteboard]];
 }
 
 - (void)rightMouseDown:(NSEvent *)event
@@ -1428,7 +1430,11 @@ static NSUInteger cleanup_count;
 
 - (void)otherMouseDown:(NSEvent *)event
 {
-  [self reportMouse:event button:2 pressed:YES];
+  if (![self reportMouse:event button:2 pressed:YES])
+    {
+      [[self window] makeFirstResponder:self];
+      [self pasteFromPasteboard:[self selectionPasteboard]];
+    }
 }
 
 - (void)otherMouseUp:(NSEvent *)event
@@ -1512,7 +1518,17 @@ static NSUInteger cleanup_count;
   return [NSPasteboard generalPasteboard];
 }
 
+- (NSPasteboard *)selectionPasteboard
+{
+  return [NSPasteboard pasteboardWithName:@"Selection"];
+}
+
 - (void)copy:(id)sender
+{
+  [self copyToPasteboard:[self pasteboard]];
+}
+
+- (void)copyToPasteboard:(NSPasteboard *)pasteboard
 {
   if (_selectionStart < 0)
     return;
@@ -1525,19 +1541,23 @@ static NSUInteger cleanup_count;
     {
       TerminalGlyph cell;
       if ([self cellAtRow:i / _columns column:i % _columns cell:&cell]
-          && cell.width != 0)
+          && cell.width != 0 && !(cell.attributes & TerminalWrapPadding))
         [line appendString:terminal_cell_string (&cell)];
       if (i % _columns == _columns - 1 || i == end)
         {
-          while ([line hasSuffix:@" "])
-            [line deleteCharactersInRange:NSMakeRange ([line length] - 1, 1)];
+          TerminalGlyph last;
+          BOOL wrapped = [self cellAtRow:i / _columns column:_columns - 1
+                                    cell:&last]
+                         && (last.attributes & TerminalSoftWrap);
+          if (!wrapped || i == end)
+            while ([line hasSuffix:@" "])
+              [line deleteCharactersInRange:NSMakeRange ([line length] - 1, 1)];
           [result appendString:line];
           [line setString:@""];
-          if (i != end)
+          if (i != end && !wrapped)
             [result appendString:@"\n"];
         }
     }
-  NSPasteboard *pasteboard = [self pasteboard];
   [pasteboard declareTypes:[NSArray arrayWithObject:NSStringPboardType]
                      owner:nil];
   [pasteboard setString:result forType:NSStringPboardType];
@@ -1545,7 +1565,12 @@ static NSUInteger cleanup_count;
 
 - (void)paste:(id)sender
 {
-  NSString *text = [[self pasteboard] stringForType:NSStringPboardType];
+  [self pasteFromPasteboard:[self pasteboard]];
+}
+
+- (void)pasteFromPasteboard:(NSPasteboard *)pasteboard
+{
+  NSString *text = [pasteboard stringForType:NSStringPboardType];
   if (![text length])
     return;
   /* Strip escape bytes so pasted text cannot terminate bracketed-paste mode. */

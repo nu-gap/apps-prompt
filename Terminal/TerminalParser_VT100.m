@@ -426,6 +426,14 @@ enum
     {
       if (autoWrap)
         {
+          if (!leftRightMode)
+            {
+              cells[y * width + width - 1].originalCell.attributes
+                  |= TerminalSoftWrap;
+              if (!wrapPending && size == 2 && x == width - 1)
+                cells[y * width + width - 1].originalCell.attributes
+                    |= TerminalWrapPadding;
+            }
           [self lineFeed];
           x = leftRightMode ? left : 0;
         }
@@ -1516,6 +1524,123 @@ enum
   [self flush];
 }
 
+/* Rebuild logical primary-screen lines, including history. Explicit line
+   endings remain separate; only automatic wraps join rows. */
+- (BOOL)reflowInto:(screen_char_t *)destination width:(int)w height:(int)h
+{
+  NSMutableArray *source = [NSMutableArray array];
+  screen_char_t *oldLine = calloc (width, sizeof (*oldLine));
+  screen_char_t *line = calloc (w, sizeof (*line));
+  if (!oldLine || !line)
+    {
+      free (oldLine);
+      free (line);
+      return NO;
+    }
+  while ([ts ts_popScrollback:oldLine count:width])
+    [source addObject:[NSData dataWithBytes:oldLine
+                                   length:width * sizeof (*oldLine)]];
+  free (oldLine);
+  NSUInteger history = [source count];
+  NSMutableArray *ordered = [NSMutableArray array];
+  NSInteger index;
+  for (index = (NSInteger)history - 1; index >= 0; index--)
+    [ordered addObject:[source objectAtIndex:index]];
+  int last = height - 1, row, col;
+  /* Empty rows below the cursor are viewport space, not output. */
+  while (last > y)
+    {
+      BOOL empty = YES;
+      for (col = 0; col < width; col++)
+        if (primaryCells[last * width + col].originalCell.chars[0])
+          empty = NO;
+      if (!empty) break;
+      last--;
+    }
+  for (row = 0; row <= last; row++)
+    [ordered addObject:[NSData dataWithBytes:primaryCells + row * width
+                                     length:width * sizeof (screen_char_t)]];
+  NSMutableArray *output = [NSMutableArray array];
+  screen_char_t blank = [self blankCell];
+  for (col = 0; col < w; col++) line[col] = blank;
+  int used = 0, cursorRow = 0, cursorCol = 0;
+  BOOL cursorWrap = NO;
+  for (index = 0; index < (NSInteger)[ordered count]; index++)
+    {
+      const screen_char_t *input = [[ordered objectAtIndex:index] bytes];
+      BOOL wrapped = (input[width - 1].originalCell.attributes
+                      & TerminalSoftWrap) != 0;
+      int length = width;
+      if (!wrapped)
+        while (length > 0 && !input[length - 1].originalCell.chars[0]
+               && input[length - 1].originalCell.width == 1)
+          length--;
+      BOOL cursorLine = index == (NSInteger)history + y;
+      int cursorOffset = x + (wrapPending ? 1 : 0);
+      if (cursorLine) length = MAX (length, cursorOffset);
+      for (col = 0; col <= length; col++)
+        {
+          if (cursorLine && col == cursorOffset)
+            {
+              cursorRow = [output count];
+              cursorCol = MIN (used, w - 1);
+              cursorWrap = used == w;
+            }
+          if (col == length) break;
+          TerminalGlyph glyph = input[col].originalCell;
+          if (!glyph.width || (glyph.attributes & TerminalWrapPadding))
+            continue;
+          int size = MIN (w, glyph.width);
+          if (used + size > w)
+            {
+              line[w - 1].originalCell.attributes |= TerminalSoftWrap;
+              if (used < w)
+                line[w - 1].originalCell.attributes |= TerminalWrapPadding;
+              [output addObject:[NSData dataWithBytes:line
+                                               length:w * sizeof (*line)]];
+              for (row = 0; row < w; row++) line[row] = blank;
+              used = 0;
+            }
+          /* Cursor at a glyph belongs after any padding wrap. */
+          if (cursorLine && col == cursorOffset)
+            {
+              cursorRow = [output count];
+              cursorCol = used;
+              cursorWrap = NO;
+            }
+          glyph.attributes &= ~(TerminalSoftWrap | TerminalWrapPadding);
+          glyph.width = size;
+          line[used++] = [self displayGlyph:glyph];
+          if (size == 2)
+            {
+              glyph.width = 0;
+              memset (glyph.chars, 0, sizeof (glyph.chars));
+              line[used++] = [self displayGlyph:glyph];
+            }
+        }
+      if (!wrapped || index + 1 == (NSInteger)[ordered count])
+        {
+          [output addObject:[NSData dataWithBytes:line
+                                           length:w * sizeof (*line)]];
+          for (row = 0; row < w; row++) line[row] = blank;
+          used = 0;
+        }
+    }
+  free (line);
+  int start = MAX (0, (int)[output count] - h);
+  /* Keep the cursor visible if there is addressed output below it. */
+  start = MIN (start, cursorRow);
+  for (row = 0; row < start; row++)
+    [ts ts_appendScrollback:[[output objectAtIndex:row] bytes] count:w];
+  for (row = 0; row < h && row + start < (int)[output count]; row++)
+    memcpy (destination + row * w, [[output objectAtIndex:row + start] bytes],
+            w * sizeof (*destination));
+  x = cursorCol;
+  y = cursorRow - start;
+  wrapPending = cursorWrap;
+  return YES;
+}
+
 - (void)setTerminalScreenWidth:(int)w height:(int)h
 {
   int row, column, shiftRows, pulled = 0;
@@ -1547,12 +1672,47 @@ enum
   size_t i;
   for (i = 0; i < (size_t)w * h; i++)
     newPrimary[i] = newAlternate[i] = blank;
+  BOOL reflow = w != width;
+  BOOL pending = wrapPending;
   shiftRows = h < height ? MIN (height - h,
                                 MAX (0, (alternate ? savedY[0] : y) - h + 1))
                          : 0;
-  /* History is managed by the view, whose line width is already the new width.
-   */
-  for (row = 0; row < shiftRows; row++)
+  if (reflow)
+    {
+      int activeX = x, activeY = y;
+      if (alternate)
+        {
+          x = savedX[0];
+          y = savedY[0];
+          wrapPending = savedWrap[0];
+        }
+      if (![self reflowInto:newPrimary width:w height:h])
+        {
+          x = activeX;
+          y = activeY;
+          wrapPending = pending;
+          free (newPrimary);
+          free (newAlternate);
+          free (line);
+          free (newTabs);
+          free (newDirty);
+          return;
+        }
+      if (alternate)
+        {
+          savedX[0] = x;
+          savedY[0] = y;
+          savedWrap[0] = wrapPending;
+          x = activeX;
+          y = activeY;
+        }
+      else
+        pending = wrapPending;
+      shiftRows = 0;
+    }
+  /* Height-only changes retain physical rows. The parser alone decides
+     which primary-screen rows enter history, including while it is hidden. */
+  for (row = 0; !reflow && row < shiftRows; row++)
     {
       for (column = 0; column < w; column++)
         line[column]
@@ -1560,13 +1720,13 @@ enum
       if (!alternate)
         [ts ts_appendScrollback:line count:w];
     }
-  for (row = 0; row < h && row + shiftRows < height; row++)
+  for (row = 0; !reflow && row < h && row + shiftRows < height; row++)
     memcpy (&newPrimary[row * w], &primaryCells[(row + shiftRows) * width],
             MIN (w, width) * sizeof (screen_char_t));
   for (row = 0; row < MIN (h, height); row++)
     memcpy (&newAlternate[row * w], &alternateCells[row * width],
             MIN (w, width) * sizeof (screen_char_t));
-  if (!alternate && h > height)
+  if (!reflow && !alternate && h > height)
     while (pulled < h - height && [ts ts_popScrollback:line count:w])
       {
         memmove (newPrimary + w, newPrimary,
@@ -1602,6 +1762,7 @@ enum
   bottom = h - 1;
   right = w - 1;
   [self moveToX:x y:y];
+  wrapPending = pending && x == right;
   for (row = 0; row < h; row++)
     [self repairRow:row];
   [self flush];

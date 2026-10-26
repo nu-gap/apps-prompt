@@ -63,7 +63,10 @@ enum
   TerminalStrike = 64,
   TerminalProtected = 128,
   TerminalDim = 256,
-  TerminalDoubleUnderline = 512
+  TerminalDoubleUnderline = 512,
+  /* Internal row metadata, retained in scrollback. */
+  TerminalSoftWrap = 1024,
+  TerminalWrapPadding = 2048
 };
 
 typedef struct
