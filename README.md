@@ -6,6 +6,9 @@ Preferences supports named profiles for fonts, colors, cursor behavior, history,
 bell, initial window dimensions, and automatic window closing on shell exit. Save copies, rename or delete profiles,
 choose the default for new windows, and apply profiles to individual sessions.
 Existing settings are preserved in the built-in Default profile.
+Closing a session or quitting warns about active jobs. Profiles can disable
+this confirmation or the running-process name shown beside the directory in
+window titles. Both options default to enabled.
 During resizing, a centered tooltip shows the current columns and rows until
 the drag ends. On GNUstep/X11, this uses X11 mouse state (enabled when the
 X11development package is available at build time).

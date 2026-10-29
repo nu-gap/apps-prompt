@@ -27,6 +27,7 @@
   NSMutableArray *_history;
   NSMutableData *_pendingInput;
   NSString *_directory;
+  NSString *_shellPath;
   NSString *_profileName;
   NSFont *_font;
   NSFont *_boldFont;
@@ -34,6 +35,8 @@
   NSInteger _preferredCursorShape;
   NSUInteger _scrollbackLimit;
   BOOL _audibleBell, _allowCursorBlink, _closeOnExit;
+  BOOL _confirmClose, _showProcess;
+  NSTimeInterval _lastSessionUpdate;
   NSTimer *_timer;
   NSTimer *_resizeTimer;
   void *_resizeDisplay;
@@ -71,6 +74,9 @@
 - (void)setProfileName:(NSString *)name;
 
 - (BOOL)isRunning;
+- (BOOL)hasActiveJobs;
+- (BOOL)requiresCloseConfirmation;
+- (NSString *)runningProcessName;
 
 - (void)restart:(id)sender;
 

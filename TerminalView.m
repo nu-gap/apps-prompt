@@ -32,6 +32,7 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <pwd.h>
 #ifdef __linux__
 #include <sys/prctl.h>
@@ -45,6 +46,7 @@
 - (void)pasteFromPasteboard:(NSPasteboard *)pasteboard;
 - (NSPasteboard *)selectionPasteboard;
 - (void)poll:(NSTimer *)timer;
+- (void)updateSessionTitle;
 
 - (void)queueBytes:(const char *)bytes length:(size_t)length;
 
@@ -183,6 +185,7 @@ static NSUInteger cleanup_count;
   RELEASE (_cursorColor);
   RELEASE (_pendingInput);
   RELEASE (_directory);
+  RELEASE (_shellPath);
   RELEASE (_profileName);
 #ifdef TERMINAL_X11_RESIZE
   if (_resizeDisplay)
@@ -257,6 +260,9 @@ static NSUInteger cleanup_count;
   _audibleBell = [preferences terminalAudibleBell];
   _allowCursorBlink = [preferences terminalCursorBlink];
   _closeOnExit = [preferences terminalCloseOnExit];
+  _confirmClose = [preferences terminalConfirmClose];
+  _showProcess = [preferences terminalShowProcess];
+  [self updateSessionTitle];
   _blinkOn = YES;
   _lastBlink = [NSDate timeIntervalSinceReferenceDate];
   [self resizeTerminal];
@@ -747,6 +753,7 @@ static NSUInteger cleanup_count;
     }
   if (![[NSFileManager defaultManager] isExecutableFileAtPath:shell])
     shell = @"/bin/sh";
+  ASSIGNCOPY (_shellPath, shell);
   BOOL isDirectory = NO;
   if (![directory isAbsolutePath]
       || ![[NSFileManager defaultManager] fileExistsAtPath:directory
@@ -1008,12 +1015,113 @@ static NSUInteger cleanup_count;
     close (_master);
 #endif
   _session = _child = _master = -1;
+  [self updateSessionTitle];
   [_pendingInput setLength:0];
+}
+
+- (BOOL)hasActiveJobs
+{
+#ifndef _WIN32
+  if (_master < 0 || _session <= 0)
+    return NO;
+  pid_t foreground = tcgetpgrp (_master);
+  if (foreground > 0 && foreground != _session)
+    return YES;
+#ifdef __linux__
+  /* exec can replace the shell without changing its process group. */
+  struct stat shellInfo, processInfo;
+  NSString *executable = [NSString stringWithFormat:@"/proc/%d/exe", _session];
+  if (_shellPath && stat ([_shellPath fileSystemRepresentation], &shellInfo) == 0
+      && stat ([executable fileSystemRepresentation], &processInfo) == 0
+      && (shellInfo.st_dev != processInfo.st_dev
+          || shellInfo.st_ino != processInfo.st_ino))
+    return YES;
+  /* Include background and stopped jobs, but not the idle login shell. */
+  DIR *directory = opendir ("/proc");
+  struct dirent *entry;
+  if (directory)
+    {
+      BOOL found = NO;
+      while ((entry = readdir (directory)))
+        {
+          char *end;
+          long number = strtol (entry->d_name, &end, 10);
+          if (*end == 0 && number > 0 && number != _session
+              && getsid ((pid_t)number) == _session)
+            {
+              found = YES;
+              break;
+            }
+        }
+      closedir (directory);
+      return found;
+    }
+#endif
+#endif
+  return NO;
+}
+
+- (BOOL)requiresCloseConfirmation
+{
+  return _confirmClose && [self hasActiveJobs];
+}
+
+- (NSString *)runningProcessName
+{
+#ifdef __linux__
+  if (_master >= 0)
+    {
+      pid_t foreground = tcgetpgrp (_master);
+      if (foreground > 0)
+        {
+          NSString *path = [NSString stringWithFormat:@"/proc/%d/comm",
+                                                     (int)foreground];
+          NSString *name = [NSString stringWithContentsOfFile:path
+                                      encoding:NSUTF8StringEncoding error:NULL];
+          return [name stringByTrimmingCharactersInSet:
+                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+    }
+#endif
+  return nil;
+}
+
+- (void)updateSessionTitle
+{
+  if (!_directory)
+    return;
+#ifdef __linux__
+  if (_child > 0)
+    {
+      char path[64], directory[4096];
+      snprintf (path, sizeof (path), "/proc/%d/cwd", _child);
+      ssize_t length = readlink (path, directory, sizeof (directory) - 1);
+      if (length > 0)
+        {
+          directory[length] = 0;
+          NSString *current = [[NSFileManager defaultManager]
+              stringWithFileSystemRepresentation:directory length:length];
+          if (current)
+            ASSIGNCOPY (_directory, current);
+        }
+    }
+#endif
+  NSString *process = _showProcess ? [self runningProcessName] : nil;
+  NSString *title = [process length]
+      ? [NSString stringWithFormat:@"Prompt — %@ — %@", _directory, process]
+      : [NSString stringWithFormat:@"Prompt — %@", _directory];
+  if (![[[self window] title] isEqual:title])
+    [[self window] setTitle:title];
 }
 
 - (void)poll:(NSTimer *)timer
 {
   NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+  if (now - _lastSessionUpdate >= 0.5)
+    {
+      _lastSessionUpdate = now;
+      [self updateSessionTitle];
+    }
   if (now - _lastBlink >= 0.5)
     {
       _lastBlink = now;

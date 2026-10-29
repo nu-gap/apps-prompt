@@ -214,6 +214,31 @@ label (NSView *view, NSString *text, CGFloat y)
     [self openDirectory:[panel filename]];
 }
 
+- (BOOL)windowShouldClose:(id)window
+{
+  if (![_windows containsObject:window]
+      || ![(TerminalView *)[window contentView] requiresCloseConfirmation])
+    return YES;
+  return NSRunAlertPanel (@"Close terminal session?",
+                          @"Processes are still running in this terminal. "
+                           @"Closing the session will terminate them.",
+                          @"Cancel", @"Close Session", nil) == NSAlertAlternateReturn;
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
+{
+  NSEnumerator *enumerator = [_windows objectEnumerator];
+  NSWindow *window;
+  while ((window = [enumerator nextObject]))
+    if ([(TerminalView *)[window contentView] requiresCloseConfirmation])
+      return NSRunAlertPanel (@"Quit Prompt?",
+                              @"Processes are still running in a terminal. "
+                               @"Quitting will terminate all sessions.",
+                              @"Cancel", @"Quit", nil) == NSAlertAlternateReturn
+                 ? NSTerminateNow : NSTerminateCancel;
+  return NSTerminateNow;
+}
+
 - (void)windowWillClose:(NSNotification *)notification
 {
   NSWindow *window = [notification object];
@@ -268,6 +293,8 @@ label (NSView *view, NSString *text, CGFloat y)
   [_bell setState:[TerminalPreferences terminalAudibleBell]];
   [_blink setState:[TerminalPreferences terminalCursorBlink]];
   [_closeOnExit setState:[TerminalPreferences terminalCloseOnExit]];
+  [_confirmClose setState:[TerminalPreferences terminalConfirmClose]];
+  [_showProcess setState:[TerminalPreferences terminalShowProcess]];
 }
 
 - (void)showPreferences:(id)sender
@@ -275,7 +302,7 @@ label (NSView *view, NSString *text, CGFloat y)
   if (!_preferences)
     {
       _preferences = [[TerminalPreferencesPanel alloc]
-          initWithContentRect:NSMakeRect (180, 180, 720, 540)
+          initWithContentRect:NSMakeRect (180, 180, 720, 610)
                     styleMask:NSTitledWindowMask | NSClosableWindowMask
                       backing:NSBackingStoreBuffered
                         defer:NO];
@@ -385,11 +412,25 @@ label (NSView *view, NSString *text, CGFloat y)
       }
       _closeOnExit = AUTORELEASE (
           [[NSButton alloc] initWithFrame:NSMakeRect (260, 500, 440, 28)]);
-      [_closeOnExit setTitle:@"Close window when shell exits"];
+      [_closeOnExit setTitle:@"Close terminal session when process exits"];
       [_closeOnExit setButtonType:NSSwitchButton];
       [_closeOnExit setTarget:self];
       [_closeOnExit setAction:@selector (changeSettings:)];
       [view addSubview:_closeOnExit];
+      NSButton **sessionChecks[] = { &_confirmClose, &_showProcess };
+      NSString *sessionTitles[] = { @"Confirm closing sessions with running jobs",
+                                    @"Show running process in window title" };
+      for (i = 0; i < 2; i++)
+        {
+          NSButton *button = AUTORELEASE ([[NSButton alloc]
+              initWithFrame:NSMakeRect (260, 570 - i * 35, 440, 28)]);
+          *sessionChecks[i] = button;
+          [button setTitle:sessionTitles[i]];
+          [button setButtonType:NSSwitchButton];
+          [button setTarget:self];
+          [button setAction:@selector (changeSettings:)];
+          [view addSubview:button];
+        }
       label (view, @"Profiles", 460);
       _profiles = AUTORELEASE (
           [[NSPopUpButton alloc] initWithFrame:NSMakeRect (20, 422, 210, 28)]);
@@ -564,6 +605,8 @@ label (NSView *view, NSString *text, CGFloat y)
   [TerminalPreferences setTerminalCursorBlink:[_blink state] == NSOnState];
   [TerminalPreferences
       setTerminalCloseOnExit:[_closeOnExit state] == NSOnState];
+  [TerminalPreferences setTerminalConfirmClose:[_confirmClose state] == NSOnState];
+  [TerminalPreferences setTerminalShowProcess:[_showProcess state] == NSOnState];
 }
 
 - (void)changeDimensions:(id)sender

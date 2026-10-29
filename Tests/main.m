@@ -532,6 +532,22 @@ test_terminal (NSString *temporaryDirectory)
       [view sendData:[@"sleep 30\r" dataUsingEncoding:NSUTF8StringEncoding]];
       [[NSRunLoop currentRunLoop]
           runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
+      test_assert ([view hasActiveJobs] && [view requiresCloseConfirmation],
+                   @"Foreground job requires close confirmation");
+      test_assert ([[view runningProcessName] isEqual:@"sleep"],
+                   @"Foreground process name is detected");
+      [[NSRunLoop currentRunLoop]
+          runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.6]];
+      test_assert ([[preview title] rangeOfString:@" — sleep"].location != NSNotFound,
+                   @"Window title includes the running process");
+      [TerminalPreferences setTerminalShowProcess:NO];
+      test_assert ([[preview title] rangeOfString:@" — sleep"].location == NSNotFound,
+                   @"Process title preference applies immediately");
+      [TerminalPreferences setTerminalShowProcess:YES];
+      [TerminalPreferences setTerminalConfirmClose:NO];
+      test_assert (![view requiresCloseConfirmation] && [view hasActiveJobs],
+                   @"Confirmation preference can disable the warning");
+      [TerminalPreferences setTerminalConfirmClose:YES];
       NSEvent *interrupt = [NSEvent keyEventWithType:NSKeyDown
                                             location:NSZeroPoint
                                        modifierFlags:NSControlKeyMask
@@ -548,6 +564,20 @@ test_terminal (NSString *temporaryDirectory)
       test_assert (terminal_wait (view, @"TERMINAL_INTERRUPT_OK") &&
                        [view isRunning],
                    @"Ctrl-C interrupts the job and preserves the shell");
+      test_assert (![view hasActiveJobs], @"Idle shell does not require a warning");
+      [view sendData:[@"sleep 30 & printf 'BACKGROUND_READY\\n'\r"
+                         dataUsingEncoding:NSUTF8StringEncoding]];
+      test_assert (terminal_wait (view, @"BACKGROUND_READY") && [view hasActiveJobs],
+                   @"Background jobs require close confirmation");
+      [view sendData:[@"kill $!; wait; cd /tmp; printf 'DIRECTORY_READY\\n'\r"
+                         dataUsingEncoding:NSUTF8StringEncoding]];
+      terminal_wait (view, @"DIRECTORY_READY");
+      [[NSRunLoop currentRunLoop]
+          runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.6]];
+      test_assert ([[preview title] hasPrefix:@"Prompt — /tmp — "],
+                   @"Title follows the shell working directory");
+      [view sendData:[[NSString stringWithFormat:@"cd '%@'\r", directory]
+                         dataUsingEncoding:NSUTF8StringEncoding]];
       if ([[NSFileManager defaultManager]
               isExecutableFileAtPath:@"/usr/bin/vim"])
         {
@@ -1430,6 +1460,84 @@ test_close_on_exit (NSString *directory)
   RELEASE (app);
 }
 
+@interface AlertAnswer : NSObject
+
++ (void)answer:(NSTimer *)timer;
+
+@end
+
+@implementation AlertAnswer
+
++ (void)answer:(NSTimer *)timer
+{
+  NSMutableArray *pending = [NSMutableArray arrayWithObject:
+      [[NSApp modalWindow] contentView]];
+  while ([pending count])
+    {
+      NSView *view = AUTORELEASE (RETAIN ([pending lastObject]));
+      [pending removeLastObject];
+      if ([view isKindOfClass:[NSButton class]])
+        {
+          NSString *title = [(NSButton *)view title];
+          BOOL cancel = [[timer userInfo] integerValue] == NSAlertDefaultReturn;
+          if ((cancel && [title isEqual:@"Cancel"])
+              || (!cancel && ([title isEqual:@"Quit"]
+                              || [title isEqual:@"Close Session"])))
+            {
+              [(NSButton *)view performClick:nil];
+              [NSApp postEvent:[NSEvent otherEventWithType:NSApplicationDefined
+                  location:NSZeroPoint modifierFlags:0 timestamp:0
+                  windowNumber:0 context:nil subtype:0 data1:0 data2:0]
+                  atStart:NO];
+              return;
+            }
+        }
+      [pending addObjectsFromArray:[view subviews]];
+    }
+}
+
+@end
+
+static void
+answer_next_alert (NSInteger answer)
+{
+  NSTimer *timer = [NSTimer timerWithTimeInterval:0.2 target:[AlertAnswer class]
+                           selector:@selector (answer:)
+                           userInfo:[NSNumber numberWithInteger:answer]
+                            repeats:NO];
+  [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSModalPanelRunLoopMode];
+}
+
+static void
+test_close_confirmation (NSString *directory)
+{
+  [TerminalPreferences selectProfile:@"Default"];
+  [TerminalPreferences resetTerminalPreferences];
+  AppController *app = [[AppController alloc] init];
+  TerminalView *view = RETAIN ([app openDirectory:directory]);
+  NSWindow *window = RETAIN ([view window]);
+  [view sendData:[@"sleep 60\r" dataUsingEncoding:NSUTF8StringEncoding]];
+  [[NSRunLoop currentRunLoop]
+      runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
+  answer_next_alert (NSAlertDefaultReturn);
+  [window performClose:nil];
+  test_assert ([window isVisible] && [view hasActiveJobs],
+               @"Canceling the close alert preserves the window and job");
+  answer_next_alert (NSAlertDefaultReturn);
+  test_assert ([app applicationShouldTerminate:NSApp] == NSTerminateCancel,
+               @"Canceling Quit preserves running sessions");
+  answer_next_alert (NSAlertAlternateReturn);
+  test_assert ([app applicationShouldTerminate:NSApp] == NSTerminateNow,
+               @"Quit proceeds when explicitly confirmed");
+  answer_next_alert (NSAlertAlternateReturn);
+  [window performClose:nil];
+  test_assert (![window isVisible] && ![view isRunning],
+               @"Confirming Close Session stops the session");
+  RELEASE (window);
+  RELEASE (view);
+  RELEASE (app);
+}
+
 int
 main (int argc, const char **argv)
 {
@@ -1509,6 +1617,7 @@ main (int argc, const char **argv)
   test_preferences_and_rendering (directory);
   test_profiles (directory);
   test_close_on_exit (directory);
+  test_close_confirmation (directory);
   [TerminalView waitForChildCleanup];
   if (saved)
     [defaults setObject:saved forKey:@"TerminalSettings"];

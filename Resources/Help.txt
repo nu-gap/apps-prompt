@@ -26,7 +26,7 @@ terminal window and preserves its shell; the menu title follows visibility.
 Close Session (Command-W) ends the session instead. Minimize and Hide Prompt
 also preserve sessions and continue processing output.
 By default, after shell exit, existing output stays visible. Return starts a new shell.
-Enable “Close window when shell exits” in Preferences to close that session
+Enable “Close terminal session when process exits” in Preferences to close that session
 automatically instead. This also applies to a program replacing the shell with
 exec; finishing an ordinary command within a running shell does not close it.
 Other sessions and the Prompt application remain open.
@@ -71,7 +71,7 @@ Apply to Current Terminal assigns the selected profile to the most recently
 active terminal, preserving its shell and window size. Selecting a profile in
 Preferences alone does not change any terminal's assignment.
 Each profile stores its font, colors, cursor, history, bell, blink and initial
-grid dimensions, plus whether to close the window on shell exit (off by default).
+grid dimensions, plus whether to close the session on process exit (off by default).
 Reducing history can discard older lines in its terminals.
  The Fonts button opens the native Fonts panel;
 choose a fixed-pitch font from 6 through 72 points. Other choices are ignored
@@ -122,3 +122,14 @@ see the bundled COPYING. It has no runtime dependency on Ycode classes.
 The engine is adapted from GNUstep Terminal under GPL version 3 or later (COPYING.engine),
 with inspiration from libvterm by Paul Evans and contributors. No libvterm
 library is bundled. Source provenance is in Terminal/README.txt.
+
+Session safety and titles
+-------------------------
+Closing a session or quitting Prompt asks for confirmation when jobs remain.
+An idle shell does not trigger the warning. Hiding a terminal keeps it running.
+“Confirm closing sessions with running jobs” controls this warning per profile.
+“Show running process in window title” adds the foreground command (or the idle
+shell) after the directory. Both options default to on and apply immediately.
+On Linux, the directory follows the shell's working directory; background and
+stopped jobs are also detected for confirmation. Other POSIX systems detect
+foreground jobs, but process names and live directory tracking require /proc.

@@ -476,6 +476,38 @@ NSString *TerminalPreferencesDidChangeNotification
                   forKey:@"closeOnExit"];
 }
 
+- (BOOL)terminalConfirmClose
+{
+  return [self terminalBooleanForKey:@"confirmClose"];
+}
+
++ (BOOL)terminalConfirmClose
+{
+  return [AUTORELEASE ([[self alloc]
+      initWithProfileName:[self selectedProfileName]]) terminalConfirmClose];
+}
+
++ (void)setTerminalConfirmClose:(BOOL)enabled
+{
+  [self setTerminalValue:[NSNumber numberWithBool:enabled] forKey:@"confirmClose"];
+}
+
+- (BOOL)terminalShowProcess
+{
+  return [self terminalBooleanForKey:@"showProcess"];
+}
+
++ (BOOL)terminalShowProcess
+{
+  return [AUTORELEASE ([[self alloc]
+      initWithProfileName:[self selectedProfileName]]) terminalShowProcess];
+}
+
++ (void)setTerminalShowProcess:(BOOL)enabled
+{
+  [self setTerminalValue:[NSNumber numberWithBool:enabled] forKey:@"showProcess"];
+}
+
 + (void)resetTerminalPreferences
 {
   [self saveTerminalSettings:[NSDictionary dictionary]];

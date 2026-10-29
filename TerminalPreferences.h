@@ -75,5 +75,11 @@ extern NSString *TerminalPreferencesDidChangeNotification;
 + (BOOL)terminalCloseOnExit;
 - (BOOL)terminalCloseOnExit;
 + (void)setTerminalCloseOnExit:(BOOL)enabled;
++ (BOOL)terminalConfirmClose;
+- (BOOL)terminalConfirmClose;
++ (void)setTerminalConfirmClose:(BOOL)enabled;
++ (BOOL)terminalShowProcess;
+- (BOOL)terminalShowProcess;
++ (void)setTerminalShowProcess:(BOOL)enabled;
 + (void)resetTerminalPreferences;
 @end

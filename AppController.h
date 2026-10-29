@@ -7,13 +7,15 @@
   NSPanel *_preferences;
   NSWindow *_help;
   NSWindow *_lastTerminalWindow; /* owned by _windows */
-  NSButton *_fontButton, *_bell, *_blink, *_closeOnExit;
+  NSButton *_fontButton, *_bell, *_blink, *_closeOnExit, *_confirmClose, *_showProcess;
   NSColorWell *_foreground, *_background, *_cursor;
   NSPopUpButton *_shape, *_profiles;
   NSTextField *_profileName, *_profileStatus;
   NSButton *_renameProfile, *_deleteProfile, *_defaultProfile;
   NSTextField *_history, *_columns, *_rows;
 }
+- (BOOL)windowShouldClose:(id)window;
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender;
 - (void)buildMenus;
 - (void)newTerminal:(id)sender;
 - (void)toggleTerminal:(id)sender;

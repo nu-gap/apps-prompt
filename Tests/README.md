@@ -15,6 +15,10 @@ Color-picker duplicates, button-cell method signatures, and test service names;
 the X11 backend also emitted RenderBadPicture diagnostics during teardown.
 These did not prevent native panel actions or pixel verification.
 
+The suite also covers process names in window titles, live directory changes,
+foreground and background job detection, disabling close warnings and process
+titles, and Cancel/Confirm behavior for closing sessions and quitting.
+
 The suite covers:
 
 - Application-owned engine integration: focus reporting, program-selected
